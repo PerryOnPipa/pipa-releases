@@ -138,3 +138,4 @@ if [[ "$response" =~ ^([Yy]|$) ]]; then  # Accetta Y, y, o Enter
     echo -e "\n${GREEN}✓ Release creata con successo!${NC}"
 else
     echo -e "\n${YELLOW}✗ Operazione annullata${NC}"
+fi
