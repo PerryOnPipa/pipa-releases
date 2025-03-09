@@ -7,7 +7,7 @@ set -eo pipefail
 DEVICE="pipa"
 
 # Path configuration
-DEVICE_DIR="out/target/product/$DEVICE"
+DEVICE_DIR="../out/target/product/$DEVICE"
 if [[ ! -d "$DEVICE_DIR" ]]; then
     echo "Error: Device directory not found: $DEVICE_DIR"
     exit 1
