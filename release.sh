@@ -6,7 +6,7 @@ set -eo pipefail
 # ==============================================================================
 DEVICE="pipa"                             # <--- MODIFICARE QUESTA VARIABILE
 ROM_DIR="../out/target/product/${DEVICE}" # Path relativo alla directory dello script
-ZIP_PATTERN="*-COMMUNITY-GMS-${DEVICE}.zip"
+ZIP_PATTERN="*-*-GMS-${DEVICE}.zip"
 
 # ==============================================================================
 #                          FUNZIONI DI UTILITÀ (NON MODIFICARE)
