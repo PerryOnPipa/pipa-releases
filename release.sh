@@ -27,7 +27,7 @@ panic() {
 cleanup() {
     if [[ -d "$tmp_dir" ]]; then
         echo -e "\n${YELLOW}Pulizia file temporanei...${NC}"
-        #rm -rf "$tmp_dir"
+        rm -rf "$tmp_dir"
     fi
 }
 
