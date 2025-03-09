@@ -3,14 +3,8 @@
 # Abort on error
 set -eo pipefail
 
-DEVICE="pipa"
-
-# Path configuration
-DEVICE_DIR="out/target/product/$DEVICE"
-if [[ ! -d "$DEVICE_DIR" ]]; then
-    echo "Error: Device directory not found: $DEVICE_DIR"
-    exit 1
-fi
+# 𝗔𝗦𝗦𝗘𝗚𝗡𝗔 𝗜𝗟 𝗡𝗢𝗠𝗘 𝗗𝗘𝗟 𝗗𝗘𝗩𝗜𝗖𝗘 𝗤𝗨𝗜
+DEVICE="sabrina"  # <--- MODIFICA QUESTO VALORE
 
 # Path configuration
 DEVICE_DIR="out/target/product/$DEVICE"
@@ -120,12 +114,13 @@ case $choice in
         ;;
 esac
 
-# Build command
+# Build command with full paths
 CMD=(gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES")
 
 # Preview
 printf '\n'
-echo "Final command:"
+echo "⚠️  ATTENZIONE: La release sarà creata in QUESTO repository ⚠️"
+echo "Repository corrente: $(git config --get remote.origin.url)"
 echo "================================"
 printf "%s " "${CMD[@]}"
 printf '\n'
