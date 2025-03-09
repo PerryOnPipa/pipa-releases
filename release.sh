@@ -1,9 +1,22 @@
 #!/usr/bin/env bash
 
-# Ensure compatibility with both bash and zsh
-if [ -n "$ZSH_VERSION" ]; then
-    setopt SH_WORD_SPLIT
-    setopt KSH_ARRAYS
+# Abort on error
+set -eo pipefail
+
+DEVICE="pipa"
+
+# Path configuration
+DEVICE_DIR="out/target/product/$DEVICE"
+if [[ ! -d "$DEVICE_DIR" ]]; then
+    echo "Error: Device directory not found: $DEVICE_DIR"
+    exit 1
+fi
+
+# Path configuration
+DEVICE_DIR="out/target/product/$DEVICE"
+if [[ ! -d "$DEVICE_DIR" ]]; then
+    echo "Error: Device directory not found: $DEVICE_DIR"
+    exit 1
 fi
 
 # Function to get user confirmation
@@ -19,47 +32,49 @@ get_confirmation() {
     done
 }
 
-# Add check for zip file existence
-if ! ls *.zip 1> /dev/null 2>&1; then
-    echo "Error: No .zip files found in current directory"
+# Extract ROM ZIP file
+ZIP_FILES=("$DEVICE_DIR"/*.zip)
+if [[ ${#ZIP_FILES[@]} -eq 0 ]]; then
+    echo "Error: No ROM ZIP found in $DEVICE_DIR"
+    exit 1
+elif [[ ${#ZIP_FILES[@]} -gt 1 ]]; then
+    echo "Error: Multiple ZIP files found. Keep only one ROM ZIP."
     exit 1
 fi
 
-# Extract tag and title from zip filename
-for f in *.zip; do
-    if [ -f "$f" ]; then
-        ZIPNAME="$f"
-        TITLE="$f"
-        # Extract first three parts of name before -UNOFFICIAL
-        TAG=$(echo "$f" | sed -E 's/(.*-.*-[0-9]+)-.*/\1/')
-        break
-    fi
-done
+ZIP_PATH="${ZIP_FILES[0]}"
+ZIPNAME=$(basename "$ZIP_PATH")
 
-# Add check for tag extraction success
-if [ -z "$TAG" ]; then
-    echo "Error: Could not extract tag from filename"
-    exit 1
-fi
+# Extract tag from ZIP filename (remove everything after last '-')
+TAG=$(basename "$ZIP_PATH" .zip | sed 's/-[^-]*$//')
+TITLE="$ZIPNAME"
 
-# Show extracted information
+# Validate IMG files
+IMG_FILES=(
+    "$DEVICE_DIR/boot.img"
+    "$DEVICE_DIR/dtbo.img"
+    "$DEVICE_DIR/vendor_boot.img"
+)
+
+# Show extracted info
+echo "Device: $DEVICE"
 echo "Tag: $TAG"
-echo "Title: $TITLE"
+echo "ROM ZIP: $ZIPNAME"
+printf '\n'
 
-# Get multiline notes with counter
+# Get release notes
 echo "Enter up to 5 release notes (press Enter after each, type 'done' when finished):"
 echo "Do not start with '-', bullets will be added automatically"
 NOTES=""
 count=0
 
-while [ $count -lt 5 ]; do
+while [[ $count -lt 5 ]]; do
     printf "Note %d: " "$count"
     read -r LINE
-    [ "$LINE" = "done" ] && break
-    
-    if [ -n "$NOTES" ]; then
-        NOTES="${NOTES}
+    [[ "$LINE" = "done" ]] && break
 
+    if [[ -n "$NOTES" ]]; then
+        NOTES="${NOTES}
 - ${LINE}"
     else
         NOTES="- ${LINE}"
@@ -67,49 +82,37 @@ while [ $count -lt 5 ]; do
     ((count++))
 done
 
-# Add check for file existence before building file list
-found=0
-for ext in "img" "zip"; do
-    if ls *."$ext" 1> /dev/null 2>&1; then
-        found=1
-        break
-    fi
-done
-
-if [ $found -eq 0 ]; then
-    echo "Error: No .img or .zip files found for release"
-    exit 1
-fi
-
-# Show release options
+# Release options
 echo
 echo "Release options:"
-echo "1. Release all files"
-echo "2. Release only .img files"
-echo "3. Release only .zip files"
-printf "Choose release option (1-3): "
+echo "1. All files (IMGs + ROM ZIP)"
+echo "2. Only IMG files"
+echo "3. Only ROM ZIP"
+printf "Choose option (1-3): "
 read -r choice
 
-# Build file list based on choice
-FILES=""
+# File selection logic
 case $choice in
     1)
-        for f in *.img *.zip*; do
-            [ -f "$f" ] && FILES="${FILES:+$FILES }\"$f\""
+        for f in "${IMG_FILES[@]}" "$ZIP_PATH"; do
+            if [[ ! -f "$f" ]]; then
+                echo "Error: Missing required file $(basename "$f")"
+                exit 1
+            fi
         done
+        FILES=("${IMG_FILES[@]}" "$ZIP_PATH")
         ;;
     2)
-        # For img files, always prompt for tag and title
-        read -r -p "Enter release tag: " TAG
-        read -r -p "Enter release title: " TITLE
-        for f in *.img; do
-            [ -f "$f" ] && FILES="${FILES:+$FILES }\"$f\""
+        for f in "${IMG_FILES[@]}"; do
+            if [[ ! -f "$f" ]]; then
+                echo "Error: Missing required file $(basename "$f")"
+                exit 1
+            fi
         done
+        FILES=("${IMG_FILES[@]}")
         ;;
     3)
-        for f in *.zip*; do
-            [ -f "$f" ] && FILES="${FILES:+$FILES }\"$f\""
-        done
+        FILES=("$ZIP_PATH")
         ;;
     *)
         echo "Error: Invalid option"
@@ -117,31 +120,27 @@ case $choice in
         ;;
 esac
 
-# Check if files were found
-if [ -z "$FILES" ]; then
-    echo "Error: No matching files found for selected option"
-    exit 1
-fi
+# Build command
+CMD=(gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES")
 
-# Show final command
+# Preview
 printf '\n'
-echo "Final command to be executed:"
+echo "Final command:"
 echo "================================"
-echo "gh release create \"$TAG\" $FILES --title \"$TITLE\" --notes \"$NOTES\""
+printf "%s " "${CMD[@]}"
+printf '\n'
 echo "================================"
 printf '\n'
 
-# Get confirmation and execute
+# Confirmation
 if get_confirmation; then
-    if eval "gh release create \"$TAG\" $FILES --title \"$TITLE\" --notes \"$NOTES\""; then
-        echo "Release created successfully."
-    else
+    "${CMD[@]}" || {
         echo "Error: Failed to create release"
         exit 1
-    fi
+    }
+    echo "Release created successfully!"
 else
-    echo "Operation cancelled by user."
-    exit 0
+    echo "Operation cancelled."
 fi
 
-read -r -p "Press enter to continue"
+read -r -p "Press enter to exit"
