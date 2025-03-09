@@ -1,141 +1,105 @@
 #!/usr/bin/env bash
-
-# Abort on error
 set -eo pipefail
 
-# 𝗔𝗦𝗦𝗘𝗚𝗡𝗔 𝗜𝗟 𝗡𝗢𝗠𝗘 𝗗𝗘𝗟 𝗗𝗘𝗩𝗜𝗖𝗘 𝗤𝗨𝗜
-DEVICE="pipa"
+# ==============================================================================
+#                          CONFIGURAZIONE OBBLIGATORIA
+# ==============================================================================
+DEVICE="pipa"  # <-- Non modificare questo nome (deve matchare lo ZIP)
+ROM_DIR="../out/target/product/${DEVICE}"
+ZIP_PATTERN="*-COMMUNITY-GMS-${DEVICE}.zip"
 
-# Path configuration
-DEVICE_DIR="../out/target/product/$DEVICE"
-if [[ ! -d "$DEVICE_DIR" ]]; then
-    echo "Error: Device directory not found: $DEVICE_DIR"
+# ==============================================================================
+#                          FUNZIONI DI UTILITÀ
+# ==============================================================================
+panic() {
+    echo -e "\033[1;31mERRORE:\033[0m $1"
     exit 1
-fi
+}
 
-# Function to get user confirmation
-get_confirmation() {
-    while true; do
-        printf "Execute this command? (Y/N): "
-        read -r response
-        case "$response" in
-            [Yy]) return 0 ;;
-            [Nn]) return 1 ;;
-            *) echo "Please enter Y or N" ;;
-        esac
+check_prerequisites() {
+    # Verifica esistenza directory ROM
+    [[ ! -d "$ROM_DIR" ]] && panic "Directory ROM non trovata: ${ROM_DIR}"
+
+    # Verifica presenza file obbligatori
+    local required_files=(
+        "${ROM_DIR}/boot.img"
+        "${ROM_DIR}/dtbo.img"
+        "${ROM_DIR}/vendor_boot.img"
+    )
+
+    for f in "${required_files[@]}"; do
+        [[ ! -f "$f" ]] && panic "File mancante: ${f##*/}"
     done
 }
 
-# Extract ROM ZIP file
-ZIP_FILES=("$DEVICE_DIR"/*.zip)
-if [[ ${#ZIP_FILES[@]} -eq 0 ]]; then
-    echo "Error: No ROM ZIP found in $DEVICE_DIR"
-    exit 1
-elif [[ ${#ZIP_FILES[@]} -gt 1 ]]; then
-    echo "Error: Multiple ZIP files found. Keep only one ROM ZIP."
-    exit 1
-fi
+# ==============================================================================
+#                          LOGICA PRINCIPALE
+# ==============================================================================
+echo -e "\n\033[1;36m[${DEVICE} Release Manager]\033[0m"
 
-ZIP_PATH="${ZIP_FILES[0]}"
-ZIPNAME=$(basename "$ZIP_PATH")
+# Step 1: Verifica preliminari
+check_prerequisites
 
-# Extract tag from ZIP filename (remove everything after last '-')
-TAG=$(basename "$ZIP_PATH" .zip | sed 's/-[^-]*$//')
-TITLE="$ZIPNAME"
-
-# Validate IMG files
-IMG_FILES=(
-    "$DEVICE_DIR/boot.img"
-    "$DEVICE_DIR/dtbo.img"
-    "$DEVICE_DIR/vendor_boot.img"
-)
-
-# Show extracted info
-echo "Device: $DEVICE"
-echo "Tag: $TAG"
-echo "ROM ZIP: $ZIPNAME"
-printf '\n'
-
-# Get release notes
-echo "Enter up to 5 release notes (press Enter after each, type 'done' when finished):"
-echo "Do not start with '-', bullets will be added automatically"
-NOTES=""
-count=0
-
-while [[ $count -lt 5 ]]; do
-    printf "Note %d: " "$count"
-    read -r LINE
-    [[ "$LINE" = "done" ]] && break
-
-    if [[ -n "$NOTES" ]]; then
-        NOTES="${NOTES}
-- ${LINE}"
-    else
-        NOTES="- ${LINE}"
-    fi
-    ((count++))
-done
-
-# Release options
-echo
-echo "Release options:"
-echo "1. All files (IMGs + ROM ZIP)"
-echo "2. Only IMG files"
-echo "3. Only ROM ZIP"
-printf "Choose option (1-3): "
-read -r choice
-
-# File selection logic
-case $choice in
-    1)
-        for f in "${IMG_FILES[@]}" "$ZIP_PATH"; do
-            if [[ ! -f "$f" ]]; then
-                echo "Error: Missing required file $(basename "$f")"
-                exit 1
-            fi
-        done
-        FILES=("${IMG_FILES[@]}" "$ZIP_PATH")
-        ;;
-    2)
-        for f in "${IMG_FILES[@]}"; do
-            if [[ ! -f "$f" ]]; then
-                echo "Error: Missing required file $(basename "$f")"
-                exit 1
-            fi
-        done
-        FILES=("${IMG_FILES[@]}")
-        ;;
-    3)
-        FILES=("$ZIP_PATH")
-        ;;
-    *)
-        echo "Error: Invalid option"
-        exit 1
-        ;;
+# Step 2: Identifica ZIP della ROM
+zip_files=("${ROM_DIR}"/${ZIP_PATTERN})
+case ${#zip_files[@]} in
+    0)  panic "Nessuno ZIP trovato con pattern: ${ZIP_PATTERN}
+        Esempio atteso: axion-1.1-20240309-COMMUNITY-GMS-${DEVICE}.zip" ;;
+    1)  zip_path="${zip_files[0]}" ;;
+    *)  panic "Trovati ${#zip_files[@]} ZIP compatibili. Mantenere solo lo ZIP principale" ;;
 esac
 
-# Build command with full paths
-CMD=(gh release create "$TAG" "${FILES[@]}" --title "$TITLE" --notes "$NOTES")
+# Step 3: Estrai metadati
+zip_name=$(basename "$zip_path")
+tag=$(basename "$zip_path" .zip | sed -E 's/(.*)-[0-9]{8}-.*/\1/')
+title="${zip_name%-COMMUNITY-GMS-*} [$(date +'%Y-%m-%d')]"
 
-# Preview
-printf '\n'
-echo "⚠️  ATTENZIONE: La release sarà creata in QUESTO repository ⚠️"
-echo "Repository corrente: $(git config --get remote.origin.url)"
-echo "================================"
-printf "%s " "${CMD[@]}"
-printf '\n'
-echo "================================"
-printf '\n'
+echo -e "\n\033[1;32mTrovato ZIP:\033[0m ${zip_name}"
+echo -e "\033[1;36mRelease Tag:\033[0m ${tag}"
+echo -e "\033[1;36mRelease Title:\033[0m ${title}"
 
-# Confirmation
-if get_confirmation; then
-    "${CMD[@]}" || {
-        echo "Error: Failed to create release"
-        exit 1
-    }
-    echo "Release created successfully!"
+# Step 4: Copia file temporanei
+echo -e "\n\033[1;33mPreparazione file...\033[0m"
+tmp_dir=$(mktemp -d)
+cp -v "${ROM_DIR}/boot.img" "$tmp_dir"
+cp -v "${ROM_DIR}/dtbo.img" "$tmp_dir"
+cp -v "${ROM_DIR}/vendor_boot.img" "$tmp_dir"
+cp -v "$zip_path" "$tmp_dir"
+
+# Step 5: Raccolta note di release
+echo -e "\n\033[1;35mInserisci le note di release (max 5):\033[0m"
+notes=()
+for i in {1..5}; do
+    read -r -p "Note ${i} (invio per saltare): " note
+    [[ -z "$note" ]] && break
+    notes+=("- ${note}")
+done
+
+# Step 6: Costruzione comando
+release_files=(
+    "${tmp_dir}/boot.img"
+    "${tmp_dir}/dtbo.img"
+    "${tmp_dir}/vendor_boot.img"
+    "${tmp_dir}/${zip_name}"
+)
+
+echo -e "\n\033[1;34mComando finale:\033[0m"
+echo "gh release create \"${tag}\" \\"
+printf "  %s \\ \n" "${release_files[@]}"
+echo "  --title \"${title}\" \\"
+echo "  --notes \"$(printf '%s\n' "${notes[@]}")\""
+
+# Step 7: Conferma
+read -r -p "Confermare l'esecuzione? (y/N) " response
+if [[ "$response" =~ ^[Yy]$ ]]; then
+    gh release create "${tag}" "${release_files[@]}" \
+        --title "${title}" \
+        --notes "$(printf '%s\n' "${notes[@]}")"
+    echo -e "\n\033[1;32mRelease creata con successo!\033[0m"
 else
-    echo "Operation cancelled."
+    echo -e "\n\033[1;33mOperazione annullata\033[0m"
 fi
 
-read -r -p "Press enter to exit"
+# Step 8: Pulizia
+echo -e "\nPulizia file temporanei..."
+rm -rf "$tmp_dir"
