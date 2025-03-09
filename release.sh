@@ -4,7 +4,7 @@
 set -eo pipefail
 
 # 𝗔𝗦𝗦𝗘𝗚𝗡𝗔 𝗜𝗟 𝗡𝗢𝗠𝗘 𝗗𝗘𝗟 𝗗𝗘𝗩𝗜𝗖𝗘 𝗤𝗨𝗜
-DEVICE="sabrina"  # <--- MODIFICA QUESTO VALORE
+DEVICE="pipa"
 
 # Path configuration
 DEVICE_DIR="out/target/product/$DEVICE"
