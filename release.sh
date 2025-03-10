@@ -1,147 +1,141 @@
 #!/usr/bin/env bash
+set -eo pipefail
 
-# Ensure compatibility with both bash and zsh
-if [ -n "$ZSH_VERSION" ]; then
-    setopt SH_WORD_SPLIT
-    setopt KSH_ARRAYS
-fi
+# ==============================================================================
+#                          CONFIGURAZIONE OBBLIGATORIA
+# ==============================================================================
+DEVICE="pipa"                             # <--- MODIFICARE QUESTA VARIABILE
+ROM_DIR="../out/target/product/${DEVICE}" # Path relativo alla directory dello script
+ZIP_PATTERN="*-*-GMS-${DEVICE}.zip"       # Nuovo pattern con doppio wildcard
 
-# Function to get user confirmation
-get_confirmation() {
-    while true; do
-        printf "Execute this command? (Y/N): "
-        read -r response
-        case "$response" in
-            [Yy]) return 0 ;;
-            [Nn]) return 1 ;;
-            *) echo "Please enter Y or N" ;;
-        esac
-    done
+# ==============================================================================
+#                          FUNZIONI DI UTILITÀ
+# ==============================================================================
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[1;36m'
+NC='\033[0m' # No Color
+
+panic() {
+    echo -e "\n${RED}[ERRORE CRITICO]${NC}"
+    echo -e "• $1"
+    echo -e "• Path verificato: ${CYAN}$(realpath "$ROM_DIR" 2>/dev/null || echo "non trovato")${NC}\n"
+    exit 1
 }
 
-# Add check for zip file existence
-if ! ls *.zip 1> /dev/null 2>&1; then
-    echo "Error: No .zip files found in current directory"
-    exit 1
-fi
-
-# Extract tag and title from zip filename
-for f in *.zip; do
-    if [ -f "$f" ]; then
-        ZIPNAME="$f"
-        TITLE="$f"
-        # Extract first three parts of name before -UNOFFICIAL
-        TAG=$(echo "$f" | sed -E 's/(.*-.*-[0-9]+)-.*/\1/')
-        break
+cleanup() {
+    if [[ -d "$tmp_dir" ]]; then
+        echo -e "\n${YELLOW}Pulizia file temporanei...${NC}"
+        rm -rf "$tmp_dir"
     fi
+}
+
+# ==============================================================================
+#                          LOGICA PRINCIPALE
+# ==============================================================================
+trap cleanup EXIT INT TERM
+
+# Genera timestamp corrente (formato: AAAAMMGG-HHMM)
+current_timestamp=$(date +'%Y%m%d-%H%M')
+current_date_human=$(date +'%Y-%m-%d %H:%M')
+
+# Creazione directory temporanea
+tmp_dir=".release_temp_${DEVICE}_${current_timestamp}"
+mkdir -p "$tmp_dir" || panic "Impossibile creare directory temporanea"
+
+echo -e "\n${CYAN}[${DEVICE} Release Manager]${NC}"
+echo -e "• Data/Ora server: ${CYAN}${current_date_human}${NC}"
+echo -e "• Directory lavoro: ${CYAN}$(pwd)${NC}"
+echo -e "• Temp dir: ${CYAN}${tmp_dir}${NC}"
+
+# ==============================================================================
+#                          VERIFICA PRELIMINARE
+# ==============================================================================
+echo -e "\n${GREEN}Verifica prerequisiti...${NC}"
+
+# Verifica directory ROM
+[[ ! -d "$ROM_DIR" ]] && panic "Directory ROM non trovata"
+
+# Verifica file obbligatori
+declare -a required_files=(
+    "${ROM_DIR}/boot.img"
+    "${ROM_DIR}/dtbo.img"
+    "${ROM_DIR}/vendor_boot.img"
+)
+
+for f in "${required_files[@]}"; do
+    [[ ! -f "$f" ]] && panic "File mancante: ${f##*/}"
+    [[ ! -s "$f" ]] && panic "File vuoto/corrotto: ${f##*/}"
 done
 
-# Add check for tag extraction success
-if [ -z "$TAG" ]; then
-    echo "Error: Could not extract tag from filename"
-    exit 1
-fi
-
-# Show extracted information
-echo "Tag: $TAG"
-echo "Title: $TITLE"
-
-# Get multiline notes with counter
-echo "Enter up to 5 release notes (press Enter after each, type 'done' when finished):"
-echo "Do not start with '-', bullets will be added automatically"
-NOTES=""
-count=0
-
-while [ $count -lt 5 ]; do
-    printf "Note %d: " "$count"
-    read -r LINE
-    [ "$LINE" = "done" ] && break
-    
-    if [ -n "$NOTES" ]; then
-        NOTES="${NOTES}
-
-- ${LINE}"
-    else
-        NOTES="- ${LINE}"
-    fi
-    ((count++))
-done
-
-# Add check for file existence before building file list
-found=0
-for ext in "img" "zip"; do
-    if ls *."$ext" 1> /dev/null 2>&1; then
-        found=1
-        break
-    fi
-done
-
-if [ $found -eq 0 ]; then
-    echo "Error: No .img or .zip files found for release"
-    exit 1
-fi
-
-# Show release options
-echo
-echo "Release options:"
-echo "1. Release all files"
-echo "2. Release only .img files"
-echo "3. Release only .zip files"
-printf "Choose release option (1-3): "
-read -r choice
-
-# Build file list based on choice
-FILES=""
-case $choice in
-    1)
-        for f in *.img *.zip*; do
-            [ -f "$f" ] && FILES="${FILES:+$FILES }\"$f\""
-        done
-        ;;
-    2)
-        # For img files, always prompt for tag and title
-        read -r -p "Enter release tag: " TAG
-        read -r -p "Enter release title: " TITLE
-        for f in *.img; do
-            [ -f "$f" ] && FILES="${FILES:+$FILES }\"$f\""
-        done
-        ;;
-    3)
-        for f in *.zip*; do
-            [ -f "$f" ] && FILES="${FILES:+$FILES }\"$f\""
-        done
-        ;;
-    *)
-        echo "Error: Invalid option"
-        exit 1
-        ;;
+# Verifica ZIP
+zip_files=("${ROM_DIR}"/${ZIP_PATTERN})
+case ${#zip_files[@]} in
+    0)  panic "Nessuno ZIP trovato con pattern: ${ZIP_PATTERN}\nEsempio atteso: rom-name-1.0-GMS-${DEVICE}.zip" ;;
+    1)  zip_path="${zip_files[0]}" ;;
+    *)  panic "Trovati ${#zip_files[@]} ZIP compatibili. Mantenere solo lo ZIP principale" ;;
 esac
 
-# Check if files were found
-if [ -z "$FILES" ]; then
-    echo "Error: No matching files found for selected option"
-    exit 1
-fi
+# ==============================================================================
+#                          PREPARAZIONE FILE
+# ==============================================================================
+echo -e "\n${GREEN}Trovato ZIP: ${CYAN}$(basename "$zip_path")${NC}"
 
-# Show final command
-printf '\n'
-echo "Final command to be executed:"
-echo "================================"
-echo "gh release create \"$TAG\" $FILES --title \"$TITLE\" --notes \"$NOTES\""
-echo "================================"
-printf '\n'
+# Estrai nome base della ROM (rimuovi tutto da -GMS- in poi)
+rom_name=$(basename "$zip_path" .zip | sed 's/-GMS-.*//')
 
-# Get confirmation and execute
-if get_confirmation; then
-    if eval "gh release create \"$TAG\" $FILES --title \"$TITLE\" --notes \"$NOTES\""; then
-        echo "Release created successfully."
-    else
-        echo "Error: Failed to create release"
-        exit 1
-    fi
+# Costruisci tag e titolo
+tag="${rom_name}-${current_timestamp}"
+title="${rom_name} | ${current_date_human}"
+
+echo -e "• ${CYAN}Release Tag:${NC} ${tag}"
+echo -e "• ${CYAN}Titolo Release:${NC} ${title}"
+
+# Copia file
+echo -e "\n${YELLOW}Copio file in ${tmp_dir}...${NC}"
+cp -v "${ROM_DIR}/boot.img" "$tmp_dir" || panic "Copia boot.img fallita"
+cp -v "${ROM_DIR}/dtbo.img" "$tmp_dir" || panic "Copia dtbo.img fallita"
+cp -v "${ROM_DIR}/vendor_boot.img" "$tmp_dir" || panic "Copia vendor_boot.img fallita"
+cp -v "$zip_path" "$tmp_dir" || panic "Copia ZIP fallita"
+
+# ==============================================================================
+#                          NOTE DI RELEASE
+# ==============================================================================
+echo -e "\n${CYAN}Inserisci le note di release (max 5):${NC}"
+notes=()
+for i in {1..5}; do
+    read -r -p "Note ${i} (invio per terminare): " note
+    [[ -z "$note" ]] && break
+    notes+=("- ${note}")
+done
+
+# ==============================================================================
+#                          COSTRUZIONE COMANDO
+# ==============================================================================
+release_files=(
+    "${tmp_dir}/boot.img"
+    "${tmp_dir}/dtbo.img"
+    "${tmp_dir}/vendor_boot.img"
+    "${tmp_dir}/$(basename "$zip_path")"
+)
+
+echo -e "\n${CYAN}COMANDO FINALE:${NC}"
+echo "gh release create \"${tag}\" \\"
+printf "  %s \\\n" "${release_files[@]}"
+echo "  --title \"${title}\" \\"
+echo "  --notes \"$(printf '%s\n' "${notes[@]}")\""
+
+# ==============================================================================
+#                          CONFERMA ED ESECUZIONE (DEFAULT Y)
+# ==============================================================================
+read -r -p $'\n'"${YELLOW}Confermare l'esecuzione? (Y/n): ${NC}" response
+if [[ "$response" =~ ^([Yy]|$) ]]; then  # Accetta Y, y, o Enter
+    echo -e "\n${GREEN}Creazione release in corso...${NC}"
+    gh release create "${tag}" "${release_files[@]}" \
+        --title "${title}" \
+        --notes "$(printf '%s\n' "${notes[@]}")"
+    echo -e "\n${GREEN}✓ Release creata con successo!${NC}"
 else
-    echo "Operation cancelled by user."
-    exit 0
+    echo -e "\n${YELLOW}✗ Operazione annullata${NC}"
 fi
-
-read -r -p "Press enter to continue"
